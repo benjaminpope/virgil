@@ -42,6 +42,14 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Cross-validation | the module [`virgil.crossval`](api/crossval.md) (`cv_task`, `cross_validate`, `aggregate`, `aggregate_files`, `fold_masks`, `save_record`, `load_records`) |
 | Instrument noise specs ([conventions](conventions.md#instrument-noise-specs)) | the module [`virgil.noise_spec`](api/noise_spec.md) (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`) |
 
+## Experimental in 0.4.2
+
+Within the provisional radio imaging, three pieces are **experimental**: the IM Lup cold-start gate failed item 6 on its 2026-11-23 rerun (grid fits ended with a KKT residual of 1.76e-4 at w = 842 and 7.84e-4 at w = 266, against the limit of 1e-4), and the gate carries to 0.4.3 with its criteria unchanged. Check their results against an independent imager.
+
+- `radio_clean` (`clean`, `RadioCleanResult`, `fit_beam`, `restore`);
+- `ComplexVisData` and `ComplexVisData.read_ms`;
+- the radio path that sets the regularization weight λ by the degrees-of-freedom discrepancy (`DofDiscrepancy`, `LCurve.dof_discrepancy`).
+
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [orbit methods](orbit_methods.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md), [radio interferometry](radio_interferometry.md) (with its Toeplitz χ²), [radio CLEAN](radio_clean.md) and [cross-validation](cross_validation.md).
 
 The module `__provisional__` tuples (`("*",)` means the whole module) are authoritative for names, checked by `tests/test_stability.py`; the argument-level rows above are documented only here.

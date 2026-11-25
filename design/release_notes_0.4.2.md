@@ -4,31 +4,81 @@
 pip install --upgrade virgil-astro==0.4.2
 ```
 
-> **Draft.** The IM Lup cold-start gate has not passed (see [Radio](#radio)), and the orbit library is being
-> de-hacked after an independent review (see [Known issues](#known-issues)). This release is not tagged until both
-> are done.
+> **Radio imaging is experimental in this release.** The IM Lup cold-start gate failed item 6 on its 2026-11-23
+> rerun (see [Radio](#radio)). The gate carries to 0.4.3 with its criteria unchanged.
 
-0.4.2 brings the radio work of 0.4.1's plan: an exact Toeplitz χ² that `fit` picks on its own where it applies,
-Adam that reports convergence, and a CLEAN that no longer diverges on sparse coverage. Most of the rest is code
-shape: the package is shorter to read, with 193 fewer single-use private helpers. It also carries the orbit, binary-pipeline, SMC and `LinearImage` work since 0.4.1; its default changes are in the CHANGELOG and the upgrading table below.
+0.4.2 brings the radio work of 0.4.1's plan (an exact Toeplitz χ² that `fit` picks on its own where it applies, a
+CLEAN that no longer diverges on sparse coverage, measurement-set input), a large audit of numerical and verdict
+bugs, and code that is shorter to read. Everything new ships **provisional**: no feature is promoted to stable in
+this release. Default changes are in the CHANGELOG and the tables below.
 
-## What's new
+## Headlines
 
 - **Toeplitz χ² is automatic.** `ComplexVisData.term(chi2="auto")` (the default) lets `fit` use the exact dirty-beam
   χ² of [`virgil.radio_toeplitz`](https://benjaminpope.github.io/virgil/radio_interferometry/#toeplitz-chi2) when the
   fit has one fixed `Image`, no antenna gains and float64, and the data are large enough to pay for it. Its cost
   does not depend on the number of visibilities. `chi2="direct"` and `chi2="toeplitz"` choose explicitly.
+- **`radio_clean`** converges on sparse coverage: the minor cycle's PSF reaches `psfpatch` or the far edge of the
+  image, as in CASA, and `clean` ends on a diverging residual.
+- **`ComplexVisData` and `read_ms`**: radio visibilities from a measurement set, with `CalibrationNuisance`
+  (per-antenna gains, spectral index) and `fit_staged_nuisances` (image, nuisances, then both, in three stages).
+- **`kkt_report`** checks a fit's first-order optimality, bound by bound, and `fit` reports a parameter stuck at a
+  prior bound (`stop="bound"`).
+- **`LinearImage`**, a pixel image whose brightness is linear in its parameters, and **`DofDiscrepancy`**
+  (`LCurve.dof_discrepancy`), a regularization weight chosen by the degrees-of-freedom discrepancy principle.
+- **`group_outlier_mixture`**, a per-group (night) outlier-mixture likelihood.
+- **`ArchimedeanSpiral`**, a pinwheel spiral model, and **`rotation_deg="grid"`**, which renders pixel images on a
+  rotated uv lattice (see [Rendered images and CLEAN outputs change](#rendered-images-and-clean-outputs-change)).
 - **Adam reports convergence.** `fit(method="adam")` runs in jitted chunks, so `time_limit` and `progress` apply to
-  it, and `info["converged"]` and `info["stop"]` are set as for LM and L-BFGS. New keywords `adam_eps`,
-  `ftol_abs` and `ftol_window` (a plateau stop), and `info["loss_history"]`. The trajectory is unchanged step for
-  step.
-- **`radio_clean` converges on sparse coverage.** The minor cycle's PSF reaches `psfpatch` or the far edge of the
-  image, as in CASA, and `clean` ends on a diverging residual instead of running on.
-- **`virgil.radio_toeplitz`** (provisional): the precomputed dirty beams and images of a one-`Image` radio fit,
-  after Fessler et al. (2005), with opt-in free per-observation offsets.
-- **A radio imaging tutorial on simulated data.**
-- **Code shape.** Single-use private helpers are inlined across the package, and CI fails a pull request that adds
-  one.
+  it, and `info["converged"]` and `info["stop"]` are set as for LM and L-BFGS.
+
+## Added (not headlines)
+
+Provisional, with no independent check yet:
+
+- `Crescent` and `Blurred(source, fwhm)`; `noise_spec` (instrument noise specs); the observable nuisance modes
+  (`DifferentialPhase`, `FluxSpectrum`, the correlated-flux marginalization of `GainModes`, closure-phase modes
+  spanning frames).
+- `fit(method="lbfgsb")`, `fit(post_step=)`, `virgil.enable_compilation_cache`.
+- `ComplexVisData.term(chi2=...)`, `set_ft_defaults(toeplitz_*)`, `fit(adam_eps=, ftol_abs=, ftol_window=)`,
+  `info["loss_history"]`, `virgil.radio_toeplitz` (opt-in `offsets="spread"`), `CalibrationNuisance(alpha=<float>)`.
+- A radio imaging tutorial on simulated data, and a pull-request gate on new single-use private helpers.
+- The **new orbit path** (`orbit_cells`, `mode_search`, `night_summaries`, `smc`) is provisional and **under
+  census**. `OrbitPipeline` does not use it (see [Known issues](#known-issues)).
+
+## Rendered images and CLEAN outputs change
+
+- **Rotated grids.** Pixel renderings of `GravityDarkenedStar` on a rotated grid
+  (`Image.from_model(..., rotation_deg=θ)`, θ ≠ 0) and under `Rotated(...)` were drawn unrotated, shifted and
+  shrunk; the in-plane blur of `ModulatedGaussianRim` and `MultipoleDisk` now follows the grid rotation too.
+  Analytic `model()` visibilities are unchanged; pixelized versions, and fits that use them, change. Unrotated grids
+  are bit-identical. `clean` with no components now reports the grid's `rotation_deg`.
+- **CLEAN restore and mask (D7).** `restore` centred its kernel half a pixel off on even-sized images, shifting
+  restored components and lowering the peak by about 4 per cent; it now sits on pixel `n // 2` (odd sizes, all that
+  `clean` accepts, are unchanged). `usemask="auto-multithresh"` follows Kepley et al. (2020, arXiv:1912.04970,
+  Eqs. 1–4): seeds are `median + max(noisethreshold × rms, sidelobethreshold × sidelobe × |peak|)` of the residual,
+  and source-free noise maps no longer seed masks. Masks and cleaned images change.
+- **Departures from Kepley et al. (2020), documented in #762.** Three remain: the 0.5 × peak cap on the sidelobe
+  level (#551); a percolated sidelobe level instead of Eq. 2; region growth on the beam-smoothed residual. Making
+  the masking paper-exact, with a census, is planned for 0.4.3 (#763).
+
+## Behaviour changes that now raise or warn
+
+| If you | In 0.4.2 | Do this |
+|---|---|---|
+| call `error_scale(by_observable=False)` on data with gains, closure offsets, a finite `prior_width` or nuisance modes (D6) | raises `ValueError` (it silently mis-scaled) | Estimate the scale on data without them. |
+| run `DiskPipeline` with `error_scale="auto"` on such data | falls back to the quoted errors **with a warning**; an explicit scalar `error_scale` raises | Check the warning; pass `"quoted"` to silence it. |
+| call `cv_task` or `cross_validate` with `sigmas="profile"` and no fixed `sigma` (D5) | raises `ValueError` (the held-out fold was scored at its own σ) | Pass a fixed `sigma` or `sigmas=True`; scoring at the training σ̂ is 0.4.3. |
+| call `apply_noise_spec` with a spec that names an instrument (D11) | requires `insname=` and refuses data whose `FluxSpectrum` carries nuisance modes | Pass `insname=`. |
+| call a `DetectionMC` method with `stat="max_snr"` on an `injection_recovery(uncertainty=False)` run (F32) | raises `ValueError` (it returned `1/(n+1)`, `(nan, nan)` or 0.0); `concatenate` refuses to mix `uncertainty` settings | Run with `uncertainty=True`, or use another statistic. |
+| call `detection.rescale_errors` on data with gains, phase offsets or extras | raises `ValueError` (it ignored them) | Rescale data without them; the weighting is 0.4.3. |
+| `fit` a noise term that is a centred `hierarchical_scales` member (S5) | warns: the MAP has no finite optimum (Neal's funnel) | Use a non-centred parameterization; the default changes in 0.4.3. |
+| call `flux_scale_posterior` with only a coupled `corrflux` spectrum | the spectrum is skipped unless requested (it raised `NotImplementedError`) | Request it explicitly. |
+
+Verdicts that can change: `error_scale` judges each scale on its own N-aware limits; `OrbitPipeline` has a
+`sampler_budget` check; a failed check of a `StarPipeline` model that was not selected is a warning. `ClosureNoise`
+now correlates triangles that share a reversed `OI_T3` leg (D1). Grid-fit `converged` flags can change (flux
+convergence is judged against −½χ²).
 
 ## Upgrading from 0.4.1
 
@@ -53,32 +103,18 @@ Other rows (all in the CHANGELOG's "Changes to default behaviour"):
 | fit with `regularizers` and a model returning one model per dataset | it raises. | Fit one dataset, or fold the regularizers into the model. |
 | install virgil | `blackjax>=1.7.1` is a new hard dependency and the floor is `jax>=0.9`; environments pinned to jax 0.8 will not install. | Upgrade jax. |
 
-The orbit, binary, SMC and `LinearImage` work is described in the CHANGELOG; the rest runs unchanged.
-
-## Added
-
-- `ComplexVisData.term(chi2=...)`, `set_ft_defaults(toeplitz_min_points=, toeplitz_points_per_pixel=,
-  toeplitz_max_bytes=)`.
-- `fit(adam_eps=, ftol_abs=, ftol_window=)`, `info["loss_history"]`, and `time_limit` and `progress` for Adam.
-- `virgil.radio_toeplitz` (provisional): `ComplexVisData.toeplitz`, `crosscheck`, `rebuild`, and the opt-in
-  `offsets="spread"`.
-- `CalibrationNuisance(alpha=<float>)` fixes the spectral index. `ComplexVisData.chi2_by_ddid` takes
-  `chunk_size`.
-- `fit` accepts likelihood terms with a scalar χ² and no residual vector, for L-BFGS and Adam.
-- A pull-request gate on new single-use private helpers (`scripts/code_shape.py --since`), and code-shape metrics in
-  the size comment.
-
-## Fixed
-
-- `radio_clean.clean` no longer diverges on sparse coverage (#551).
-- `fit` gauge-fixes the log-brightness of a free-pixel `Image`: LM's QR solve used to drift along the constant
-  direction by rounding noise.
-- Two tests that failed on some CI runner CPUs (#528) compare at tolerances the platforms agree on.
-
 ## Radio
 
-All radio code stays **provisional**. Trust status of each piece, from the radio register
-(section B of the internal radio innovations register):
+**Radio imaging is experimental in 0.4.2:** `radio_clean`, `ComplexVisData` / `read_ms`, and the radio path that
+chooses the regularization weight by the degrees-of-freedom discrepancy (`DofDiscrepancy`). They are marked in
+[`docs/stability.md`](https://benjaminpope.github.io/virgil/stability/). Use them, but check results against an
+independent imager.
+
+**IM Lup cold-start gate: FAILED item 6** (2026-11-23 rerun, registered criteria unchanged). The grid fits ended
+unconverged: at w = 842 the KKT residual was 1.76e-4 and at w = 266 it was 7.84e-4, against the limit of 1e-4. Ben
+ruled "ship as experimental". The criteria are not loosened and the gate carries to 0.4.3.
+
+Trust status of each piece, from the radio register:
 
 | Item | Status | Independent check |
 |---|---|---|
@@ -89,51 +125,41 @@ All radio code stays **provisional**. Trust status of each piece, from the radio
 | Cold starts: coarse-to-fine | novel, experimental | none |
 | Toeplitz likelihood | established | Toeplitz against direct term; the IM Lup A100 run is not yet in evidence |
 | Free offsets (`offsets="spread"`, opt-in) | derived (type-3 NUFFT; the combination is not in the literature we found) | none |
-| float32 δV loss | derived, experimental; no code on `main` | the method alone |
 | Marginalized gains, Stage 1 (opt-in) | established | none yet |
-| Ordered subsets | established; not built | none |
-
-**IM Lup cold-start gate: not passed.** The gate asks that a cold start beat MPoL's objective and raw χ²/N, converge,
-leave under 1% dead pixels, and recover the CLEAN flux to 10%. The last run reached raw χ²/N 2.7046 against MPoL's
-2.7062, but its image fails: dead pixels left by the Gaussian start leave edge arcs and a ripple across the disk.
-The Adam arms are pending.
-
-The dead-pixel criterion is judged on the 30 mas tapered image, the image the regulariser acts on and the one MPoL
-exports. The untapered base image's dead-pixel count is logged alongside it. The base image can collapse into dots
-because the taper multiplies only the model, so lowering the regularization weight deconvolves the taper under
-positivity.
-
-> Gate result: _to be filled in before the tag._
 
 ## Known issues
 
-- **The orbit library was tuned to pass its own gates.** An independent review (Google Antigravity) found that the
-  orbit library was tuned with heuristics and magic numbers so that Gl 229 and iota Peg converge. That is gate
-  hacking, and the code is not robust for orbits in general. Fixes are being made in separate pull requests, all
-  for 0.4.2, and this release is not tagged until they merge.
-  - **The Gl 229 orbit-gate passes at 0.4.0 and 0.4.1 are UNVERIFIED.** They stay unverified until the de-hacked
-    code reproduces them from a cold start, with no tuning to the target.
-  - Fix pull requests: _to be filled in (Antigravity PR list)._
-  - Results of the de-hacked code on Gl 229 and iota Peg, and on orbits the code was not tuned on: _to be filled
-    in._
-- **Closure phases near a visibility null** ([#309](https://github.com/benjaminpope/virgil/issues/309)). Unchanged
-  from 0.4.1: a closure phase jumps by π where a model visibility passes through zero, so its gradient is unbounded
-  there. An image fit that drifts to such a null can stall.
-- **Radio is provisional**, as above, and the cold-start gate has not passed.
+- **`OrbitPipeline` still uses the old orbit path**, with its tuning history. The new orbit modules
+  (`orbit_cells`, `mode_search`, `night_summaries`, `smc`) are under census and are not used by it; the census gate
+  moves to 0.4.3 ([#743](https://github.com/benjaminpope/virgil/issues/743)). **The Gl 229 orbit-gate passes at 0.4.0
+  and 0.4.1 are unverified.**
+- **Sampler issue [#580](https://github.com/benjaminpope/virgil/issues/580)** is open.
+- **Three strict xfails stay open:** [#745](https://github.com/benjaminpope/virgil/issues/745) (the orbit-cell fit is
+  not exactly equivariant to the scale of the quoted errors), [#747](https://github.com/benjaminpope/virgil/issues/747)
+  (tempering) and `test_night_flags`.
+- **A staged fit can report success with an unconverged stage 3.** `fit_staged_nuisances`'s `failed` ignores
+  stage-3 convergence; the fix is [#771](https://github.com/benjaminpope/virgil/pull/771), planned for 0.4.3.
+- **Antenna-gain phase prior (D4).** The prior on antenna-gain phase and its test tolerances are a known limitation;
+  the review is planned for 0.4.3.
+- **Radio imaging is experimental**, as above.
+- **Closure phases near a visibility null** ([#309](https://github.com/benjaminpope/virgil/issues/309)). A closure
+  phase jumps by π where a model visibility passes through zero, so its gradient is unbounded there. An image fit
+  that drifts to such a null can stall.
 
 ## Smaller and easier to read
 
-Measured on `src/virgil` with `scripts/code_shape_metrics.py`:
+Measured on `src/virgil` (v0.4.1 against the release candidate) with `scripts/code_shape_metrics.py` and a count of
+docstring lines:
 
 | | 0.4.1 | 0.4.2 |
 |---|---|---|
-| Docstrings over 60 lines | 0 | 0 |
-| Docstrings over 40 lines | 30 | 22 |
-| Docstring lines in total | 14,040 | 13,647 (−3%) |
-| Private helpers called from one place | 418 | 225 (−46%) |
-| Source lines in total | 56,790 | 57,813 (+2%) |
+| Docstrings over 60 lines | 0 | 3 (`fit`, `variational`, `dof_discrepancy`) |
+| Docstrings over 40 lines | 30 | 42 |
+| Docstring lines in total | 14,040 | 16,210 (+15%) |
+| Private helpers referenced once (raw text count) | 418 | 234 (−44%) |
+| Source lines in total | 56,790 | 68,681 (+21%) |
 
-The source is longer in total because of the radio work (Toeplitz, CLEAN) and the new Adam driver; the refactor
-batches shorten what they touch. Numbers are from `origin/main` at the time of writing and are re-run at the tag.
+The package is longer in total: the radio, orbit-cell and audit work added more than the refactor batches removed,
+and three docstrings now pass 60 lines. Numbers are re-run at the tag.
 
 Full details are in [CHANGELOG.md](https://github.com/benjaminpope/virgil/blob/v0.4.2/CHANGELOG.md).

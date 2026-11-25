@@ -204,6 +204,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
    gh workflow run tests.yml --ref main
    ```
    `publish.yml` refuses to build unless `tests.yml` succeeded in the full tier (macOS, py3.13 and the dependency floors) on exactly the tagged commit, so a release can never ship untested code. A red `main` opens an issue labelled `red-main`; close it first.
+   The nightly run (the slow set included) must also have passed twice in a row on `main` before the release PR is merged: check its last two runs with `gh run list --workflow tests.yml --event schedule --branch main --limit 2`. A red nightly is a finding to fix, or to record under the release notes' known issues; it is not waited out.
 4. **Evidence gate** ([virgil-validation](https://github.com/benjaminpope/virgil-validation), its method page "Release gate"). All three must hold for the release commit:
    - virgil-validation's tier A passes against that commit (`pytest -m "not slow"` there, with virgil installed from the commit);
    - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
