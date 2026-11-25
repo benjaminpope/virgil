@@ -205,36 +205,37 @@ def flat_nuts_sampler(
     run = jax.jit(jax.vmap(one_chain))
     unpack_all = jax.jit(jax.vmap(jax.vmap(unpack)))
 
-    def _sample(seed, init):
-        key, k_init = jax.random.split(jax.random.PRNGKey(seed))
-        if init is None:
-            keys = jax.random.split(k_init, num_chains * len(priors)).reshape(
-                num_chains, len(priors), -1
-            )
-            starts = [
-                {
-                    (vector_site(p) if is_angle_vector(pr) else p): pr.sample(
-                        keys[c, i]
-                    )
-                    for i, (p, pr) in enumerate(priors.items())
-                }
-                for c in range(num_chains)
-            ]
-        elif isinstance(init, dict):
-            starts = [init] * num_chains
-        else:
-            starts = list(init)
-        u0 = cast_tree(np.stack([pack(s) for s in starts]), dtype)
-        draws, steps, div, step_size = run(
-            jax.random.split(key, num_chains), u0
-        )
-        info = {"num_steps": steps, "diverging": div, "step_size": step_size}
-        _warn_if_stuck(div, step_size)
-        return unpack_all(draws), info
-
     def sample(seed=0, init=None):
         with run_in(dtype):
-            return _sample(seed, init)
+            key, k_init = jax.random.split(jax.random.PRNGKey(seed))
+            if init is None:
+                keys = jax.random.split(
+                    k_init, num_chains * len(priors)
+                ).reshape(num_chains, len(priors), -1)
+                starts = [
+                    {
+                        (
+                            vector_site(p) if is_angle_vector(pr) else p
+                        ): pr.sample(keys[c, i])
+                        for i, (p, pr) in enumerate(priors.items())
+                    }
+                    for c in range(num_chains)
+                ]
+            elif isinstance(init, dict):
+                starts = [init] * num_chains
+            else:
+                starts = list(init)
+            u0 = cast_tree(np.stack([pack(s) for s in starts]), dtype)
+            draws, steps, div, step_size = run(
+                jax.random.split(key, num_chains), u0
+            )
+            info = {
+                "num_steps": steps,
+                "diverging": div,
+                "step_size": step_size,
+            }
+            _warn_if_stuck(div, step_size)
+            return unpack_all(draws), info
 
     return sample
 
