@@ -67,7 +67,7 @@ Provisional, with no independent check yet:
 | If you | In 0.4.2 | Do this |
 |---|---|---|
 | call `error_scale(by_observable=False)` on data with gains, closure offsets, a finite `prior_width` or nuisance modes (D6) | raises `ValueError` (it silently mis-scaled) | Estimate the scale on data without them; the weighting is [#777](https://github.com/benjaminpope/virgil/issues/777) (0.4.3). |
-| run `DiskPipeline` with `error_scale="auto"` on such data | falls back to the quoted errors **with a warning**; an explicit scalar `error_scale` raises | Check the warning; pass `"quoted"` to silence it. |
+| run `DiskPipeline` with `error_scale="auto"` on such data | falls back to the quoted errors **with a warning**; an explicit `error_scale="rescale"` raises | Check the warning; pass `"quoted"` to silence it. |
 | call `cv_task` or `cross_validate` with `sigmas="profile"` and no fixed `sigma` (D5) | raises `ValueError` (the held-out fold was scored at its own σ) | Pass a fixed `sigma` or `sigmas=True`; scoring at the training σ̂ is 0.4.3. |
 | call `apply_noise_spec` with a spec that names an instrument (D11) | requires `insname=` and refuses data whose `FluxSpectrum` carries nuisance modes | Pass `insname=`. |
 | call a `DetectionMC` method with `stat="max_snr"` on an `injection_recovery(uncertainty=False)` run (F32) | raises `ValueError` (it returned `1/(n+1)`, `(nan, nan)` or 0.0); `concatenate` refuses to mix `uncertainty` settings | Run with `uncertainty=True`, or use another statistic. |
@@ -99,7 +99,6 @@ Other rows (all in the CHANGELOG's "Changes to default behaviour"):
 | use `TSV(weight=w)` or `TV` | `beam_mas` is required, so the old call raises `TypeError`. | Pass `beam_mas`. |
 | use `BinaryPipeline` | `flux_range` is `[1e-5, 1]`; `global_nsigma` comes from simulated nulls, is capped at 3.09σ and `n_trials` is removed; limits use Ruffio et al. by default. | `limit_method="absil"` restores the old limits. |
 | pass `outlier_eps` or `drop_outlier_night`, or read `night_dropped` or `modes.robustness` | the keywords are ignored with a `FutureWarning`; the check and fields are removed. | Drop them. |
-| pass `night_length`, `resolution` or `motion_fraction` to `period_domain` | they are no longer accepted. | Drop them. |
 | fit with `regularizers` and a model returning one model per dataset | it raises. | Fit one dataset, or fold the regularizers into the model. |
 | install virgil | `blackjax>=1.7.1` is a new hard dependency and the floor is `jax>=0.9`; environments pinned to jax 0.8 will not install. | Upgrade jax. |
 
@@ -137,32 +136,41 @@ Trust status of each piece, from the radio register:
   moves to 0.4.3 ([#743](https://github.com/benjaminpope/virgil/issues/743)). **The Gl 229 orbit-gate passes at 0.4.0
   and 0.4.1 are unverified.**
 - **Sampler issue [#580](https://github.com/benjaminpope/virgil/issues/580)** is open.
-- **Three strict xfails stay open:** [#745](https://github.com/benjaminpope/virgil/issues/745) (the orbit-cell fit is
-  not exactly equivariant to the scale of the quoted errors), [#747](https://github.com/benjaminpope/virgil/issues/747)
-  (tempering) and `test_night_flags`.
+- **Open xfails.** Strict: [#747](https://github.com/benjaminpope/virgil/issues/747) (tempering), two in
+  `test_night_flags`, [#751](https://github.com/benjaminpope/virgil/issues/751) (the `kkt_report` band-limit gate at
+  10 mas pixels), [#580](https://github.com/benjaminpope/virgil/issues/580), and two for `nufftax` 0.6.1 under nested
+  `vmap`. One is non-strict: `test_the_period_is_calibrated_with_injected_jitter_end_to_end` (seed 0 flags a
+  wrong-period cell). [#745](https://github.com/benjaminpope/virgil/issues/745) is not an xfail: the orbit-cell
+  `ln Z` check is restricted to the cells that matter, because `ln Z` of negligible-mass cells disagrees across error
+  scales.
+- **Nightly [#574](https://github.com/benjaminpope/virgil/issues/574) is red** on two lowest-dependency-pin tests,
+  `test_the_shape_gate_decides_on_both_sides_of_the_threshold[data2-4.0-True]` and
+  `test_optimized_flux_grid_converges_everywhere_in_float32`; the fix is on `main`, not yet in this candidate.
 - **A staged fit can report success with an unconverged stage 3.** `fit_staged_nuisances`'s `failed` ignores
   stage-3 convergence; the fix is [#771](https://github.com/benjaminpope/virgil/pull/771), planned for 0.4.3.
 - **Antenna-gain phase prior (D4).** The prior on antenna-gain phase and its test tolerances are a known limitation;
   the review is planned for 0.4.3.
 - **Radio imaging is experimental**, as above.
-- **Closure phases near a visibility null** ([#309](https://github.com/benjaminpope/virgil/issues/309)). A closure
+- **Closure phases near a visibility null** ([#578](https://github.com/benjaminpope/virgil/issues/578), which
+  supersedes the closed #309). A closure
   phase jumps by π where a model visibility passes through zero, so its gradient is unbounded there. An image fit
   that drifts to such a null can stall.
 
 ## Smaller and easier to read
 
 Measured on `src/virgil` (v0.4.1 against the release candidate) with `scripts/code_shape_metrics.py` and a count of
-docstring lines:
+**total** docstring lines (sections such as Parameters and Returns included). The CI cap in
+`tests/lint/test_docstring_length.py` counts prose lines only, and no docstring exceeds it:
 
 | | 0.4.1 | 0.4.2 |
 |---|---|---|
-| Docstrings over 60 lines | 0 | 3 (`fit`, `variational`, `dof_discrepancy`) |
+| Docstrings over 60 lines in total | 0 | 3 (`fit`, `variational`, `dof_discrepancy`) |
 | Docstrings over 40 lines | 30 | 42 |
 | Docstring lines in total | 14,040 | 16,210 (+15%) |
 | Private helpers referenced once (raw text count) | 418 | 234 (−44%) |
 | Source lines in total | 56,790 | 68,681 (+21%) |
 
 The package is longer in total: the radio, orbit-cell and audit work added more than the refactor batches removed,
-and three docstrings now pass 60 lines. Numbers are re-run at the tag.
+and three docstrings now pass 60 lines in total. Numbers are re-run at the tag.
 
 Full details are in [CHANGELOG.md](https://github.com/benjaminpope/virgil/blob/v0.4.2/CHANGELOG.md).

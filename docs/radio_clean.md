@@ -3,6 +3,9 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
+!!! warning "Experimental in 0.4.2"
+    Radio imaging did not pass its IM Lup gate; see [stability](stability.md#experimental-in-042). Check results against an independent imager.
+
 [`virgil.radio_clean.clean`](api/radio_clean.md) deconvolves calibrated complex
 visibilities ([`ComplexVisData`](radio_interferometry.md)) the way radio
 astronomers expect: Cotton–Schwab major cycles against the exact visibility

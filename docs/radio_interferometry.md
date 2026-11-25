@@ -3,6 +3,9 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
+!!! warning "Experimental in 0.4.2"
+    Radio imaging did not pass its IM Lup gate; see [stability](stability.md#experimental-in-042). Check results against an independent imager.
+
 This module is not final and claims no parity with MPoL or with published
 DSHARP analyses.
 
