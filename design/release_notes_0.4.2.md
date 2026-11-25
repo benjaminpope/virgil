@@ -66,12 +66,12 @@ Provisional, with no independent check yet:
 
 | If you | In 0.4.2 | Do this |
 |---|---|---|
-| call `error_scale(by_observable=False)` on data with gains, closure offsets, a finite `prior_width` or nuisance modes (D6) | raises `ValueError` (it silently mis-scaled) | Estimate the scale on data without them. |
+| call `error_scale(by_observable=False)` on data with gains, closure offsets, a finite `prior_width` or nuisance modes (D6) | raises `ValueError` (it silently mis-scaled) | Estimate the scale on data without them; the weighting is [#777](https://github.com/benjaminpope/virgil/issues/777) (0.4.3). |
 | run `DiskPipeline` with `error_scale="auto"` on such data | falls back to the quoted errors **with a warning**; an explicit scalar `error_scale` raises | Check the warning; pass `"quoted"` to silence it. |
 | call `cv_task` or `cross_validate` with `sigmas="profile"` and no fixed `sigma` (D5) | raises `ValueError` (the held-out fold was scored at its own σ) | Pass a fixed `sigma` or `sigmas=True`; scoring at the training σ̂ is 0.4.3. |
 | call `apply_noise_spec` with a spec that names an instrument (D11) | requires `insname=` and refuses data whose `FluxSpectrum` carries nuisance modes | Pass `insname=`. |
 | call a `DetectionMC` method with `stat="max_snr"` on an `injection_recovery(uncertainty=False)` run (F32) | raises `ValueError` (it returned `1/(n+1)`, `(nan, nan)` or 0.0); `concatenate` refuses to mix `uncertainty` settings | Run with `uncertainty=True`, or use another statistic. |
-| call `detection.rescale_errors` on data with gains, phase offsets or extras | raises `ValueError` (it ignored them) | Rescale data without them; the weighting is 0.4.3. |
+| call `detection.rescale_errors` on data with gains, phase offsets or extras | raises `ValueError` ([#776](https://github.com/benjaminpope/virgil/pull/776); it ignored them) | Rescale data without them; the weighting is [#777](https://github.com/benjaminpope/virgil/issues/777) (0.4.3). |
 | `fit` a noise term that is a centred `hierarchical_scales` member (S5) | warns: the MAP has no finite optimum (Neal's funnel) | Use a non-centred parameterization; the default changes in 0.4.3. |
 | call `flux_scale_posterior` with only a coupled `corrflux` spectrum | the spectrum is skipped unless requested (it raised `NotImplementedError`) | Request it explicitly. |
 
