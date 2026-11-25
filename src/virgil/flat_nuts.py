@@ -12,7 +12,7 @@ priors into one vector and runs blackjax's window adaptation and NUTS on it, wit
 same posterior: the log density is the priors' log densities plus the log-determinants of
 the transforms plus the likelihood terms, as in `numpyro_model`.
 
-Source: Hoffman and Gelman (2014), NUTS; adaptation as in Stan, via blackjax.
+Source: Hoffman & Gelman 2014 ([references](../references.md#hoffman2014)); BlackJAX, Cabezas et al. 2024 ([references](../references.md#cabezas2024)); window adaptation as in Stan.
 """
 
 from __future__ import annotations
@@ -20,12 +20,14 @@ from __future__ import annotations
 import warnings
 
 import blackjax
+from blackjax.adaptation.base import get_filter_adapt_info_fn
 import jax
 import jax.numpy as np
 import numpy as onp
 from numpyro.distributions.transforms import biject_to
 
 from ._precision import cast_tree, run_in
+from ._deprecate import external_stacklevel
 from .angles import is_angle_vector, vector_angle, vector_site
 
 __all__ = ["flat_nuts", "flat_nuts_sampler", "packed_posterior"]
@@ -59,6 +61,12 @@ def packed_posterior(priors, likelihoods):
         Length of the packed vector.
     """
     paths = list(priors)
+    for p in paths:
+        if not is_angle_vector(priors[p]) and priors[p].shape() != ():
+            raise ValueError(
+                f"flat_nuts: the prior at {p!r} has shape {priors[p].shape()}; only "
+                "scalar priors and AngleVector are supported."
+            )
     sizes = [2 if is_angle_vector(priors[p]) else 1 for p in paths]
     maps = {
         p: None if is_angle_vector(priors[p]) else biject_to(priors[p].support)
@@ -169,18 +177,19 @@ def flat_nuts_sampler(
         ``(num_chains, num_samples, ...)``; ``info`` has ``num_steps`` and ``diverging``
         of that shape, and the adapted ``step_size`` per chain.
     """
-    with run_in(dtype):
+    with run_in(dtype):  # the transforms' bounds are built here, in ``dtype``
         priors, likelihoods = cast_tree(
             (dict(priors), list(likelihoods)), dtype
         )
-    logdensity, unpack, pack, _ = packed_posterior(priors, likelihoods)
-    warmup = blackjax.window_adaptation(
-        blackjax.nuts,
-        logdensity,
-        is_mass_matrix_diagonal=not dense_mass,
-        target_acceptance_rate=target_accept,
-        max_num_doublings=max_tree_depth,
-    )
+        logdensity, unpack, pack, _ = packed_posterior(priors, likelihoods)
+        warmup = blackjax.window_adaptation(
+            blackjax.nuts,
+            logdensity,
+            is_mass_matrix_diagonal=not dense_mass,
+            target_acceptance_rate=target_accept,
+            max_num_doublings=max_tree_depth,
+            adaptation_info_fn=get_filter_adapt_info_fn(),  # keep no warmup history
+        )
 
     def one_chain(k, u):
         k_warm, k_run = jax.random.split(k)
@@ -226,6 +235,12 @@ def flat_nuts_sampler(
             else:
                 starts = list(init)
             u0 = cast_tree(np.stack([pack(s) for s in starts]), dtype)
+            if not bool(np.all(np.isfinite(u0))):
+                raise ValueError(
+                    "flat_nuts: a start is on or outside the edge of its prior's "
+                    "support, so its unconstrained coordinate is not finite; move "
+                    "it inside."
+                )
             draws, steps, div, step_size = run(
                 jax.random.split(key, num_chains), u0
             )
@@ -235,21 +250,31 @@ def flat_nuts_sampler(
                 "step_size": step_size,
             }
             _warn_if_stuck(div, step_size)
-            return unpack_all(draws), info
+            # NumPy arrays, so float64 results do not leak into a float32 session
+            return jax.tree.map(onp.asarray, (unpack_all(draws), info))
 
     return sample
 
 
 def _warn_if_stuck(diverging, step_size):
-    """Warn on a divergent run or a chain whose adapted step size is far below the rest."""
+    """Warn on divergences, a non-finite step size, or a chain far below the rest."""
     fraction = float(onp.mean(onp.asarray(diverging)))
-    steps = onp.asarray(step_size)
-    spread = float(steps.max() / max(steps.min(), onp.finfo(float).tiny))
-    if fraction > 0.01 or spread > 10.0:
+    steps = onp.asarray(step_size, float)
+    spread = float(steps.max() / max(steps.min(), onp.finfo(steps.dtype).tiny))
+    reasons = []
+    # 1% of draws: a handful of divergences is common on a healthy fit, a tenth is not
+    if fraction > 0.01:
+        reasons.append(f"{fraction:.1%} of draws diverged")
+    # a stuck chain adapts to a step size orders of magnitude below its siblings
+    if not onp.all(onp.isfinite(steps)) or spread > 10.0:
+        reasons.append(f"the adapted step sizes are {steps.tolist()}")
+    if reasons:
         warnings.warn(
-            f"flat_nuts: {fraction:.1%} of draws diverged and the adapted step sizes "
-            f"span a factor {spread:.0f}; a chain is probably stuck. Start the chains "
-            "near the optimum (init=, e.g. from starting_orbits) and check "
-            "info['diverging'] and info['step_size'].",
-            stacklevel=3,
+            "flat_nuts: "
+            + " and ".join(reasons)
+            + "; a chain is probably stuck. Start the chains near the optimum "
+            "(init=, e.g. from starting_orbits) and check info['diverging'] and "
+            "info['step_size']. A single chain, or chains given one start, cannot "
+            "show a spread.",
+            stacklevel=external_stacklevel(),
         )

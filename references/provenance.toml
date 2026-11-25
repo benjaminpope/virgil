@@ -2075,7 +2075,7 @@ arxiv = "2402.10797"
 repo = "https://github.com/blackjax-devs/blackjax"
 verified = true
 verified_via = "arxiv"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
+used_in = ["virgil.flat_nuts", "virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
 note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
 
 [ref.lee2018]

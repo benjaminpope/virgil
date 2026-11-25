@@ -205,6 +205,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `(module)` | [Cabezas et al. (2024)](#cabezas2024), [arXiv:2402.10797](https://arxiv.org/abs/2402.10797), [GitHub](https://github.com/blackjax-devs/blackjax) | after |
 | `(module)` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
 
 ### `virgil.gains`
