@@ -139,10 +139,13 @@ Trust status of each piece, from the radio register:
 - **Open xfails.** Strict: [#747](https://github.com/benjaminpope/virgil/issues/747) (tempering), two in
   `test_night_flags`, [#751](https://github.com/benjaminpope/virgil/issues/751) (the `kkt_report` band-limit gate at
   10 mas pixels), [#580](https://github.com/benjaminpope/virgil/issues/580), and two for `nufftax` 0.6.1 under nested
-  `vmap`. One is non-strict: `test_the_period_is_calibrated_with_injected_jitter_end_to_end` (seed 0 flags a
-  wrong-period cell). [#745](https://github.com/benjaminpope/virgil/issues/745) is not an xfail: the orbit-cell
+  `vmap`. [#745](https://github.com/benjaminpope/virgil/issues/745) is not an xfail: the orbit-cell
   `ln Z` check is restricted to the cells that matter, because `ln Z` of negligible-mass cells disagrees across error
   scales.
+- **`position_cells` can return NaN `p_pos` (with `failed` set)** for a system whose alias cell next to the true period
+  has an importance-sampling ESS below 10 and a likelihood-peak bound too loose to prove it negligible. Seen on the
+  two-season, 5-sigma-jitter test, seed 0, where that cell is 42 nats below the true one. The result is flagged, not
+  silently wrong. Tracked for 0.4.3 (orbit audit, census-gated).
 - **Nightly [#574](https://github.com/benjaminpope/virgil/issues/574) is red** on two lowest-dependency-pin tests,
   `test_the_shape_gate_decides_on_both_sides_of_the_threshold[data2-4.0-True]` and
   `test_optimized_flux_grid_converges_everywhere_in_float32`; the fix is on `main`, not yet in this candidate.
