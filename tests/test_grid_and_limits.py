@@ -512,7 +512,7 @@ def test_limit_options_are_keyword_only():
             limit_fn(BinaryModelCartesian, oidata_sim, samples, 3.0, "flux")
 
 
-def _extras_data(extras):
+def _extras_data(extras, flux_sd=3.0):
     """Noisy four-telescope null data with extra observables."""
     import jax
 
@@ -523,7 +523,7 @@ def _extras_data(extras):
     null = System(star=PointSource(), comp=PointSource(0.0, 0.0, 0.0))
     data = OIData(read_oifits(build_hdulist(_tables(null)), extras=extras))
     if "flux" in extras:
-        data = data.with_flux_scale(scale=(3.0, 3.0))
+        data = data.with_flux_scale(scale=(3.0, flux_sd))
     template = System(star=PointSource(), comp=PointSource(0.01, 0.0, 0.0))
     return data.with_model(null, key=jax.random.PRNGKey(3)), template
 
@@ -587,7 +587,9 @@ def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data(extras):
     """
     from virgil.limits import injection_limits
 
-    data, template = _extras_data(extras)
+    # Prior sd 1: the simulated grey scale k stays positive (with sd = mean
+    # the seed draws k < 0, which the oracle cannot restate as a prior mean).
+    data, template = _extras_data(extras, flux_sd=1.0)
     assert len(data.extras) == len(extras)
     limits = onp.asarray(injection_limits(template, data, EXTRAS_SAMPLES, 3.0))
     assert limits.shape == (2, 1)
