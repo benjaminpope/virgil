@@ -58,16 +58,17 @@ def _groups(i1, i2, i3):
 
 
 # deliberate: vectorised incidence matrix; test_closure_noise_is_unchanged swaps in the per-row loop (_slow_incidence) to prove equivalence
-def _incidence(group, i1, i2, i3):
-    """The group's triangle-by-baseline matrix T."""
+def _incidence(group, i1, i2, i3, signs=None):
+    """The group's triangle-by-baseline matrix T (``signs``: per-leg ±1)."""
     legs = onp.stack([i1[group], i2[group], i3[group]], axis=1)
     baselines, col = onp.unique(legs, return_inverse=True)
     col = col.reshape(legs.shape)
     t = onp.zeros((group.size, baselines.size))
     rows = onp.arange(group.size)
-    onp.add.at(t, (rows, col[:, 0]), 1.0)
-    onp.add.at(t, (rows, col[:, 1]), 1.0)
-    onp.add.at(t, (rows, col[:, 2]), -1.0)
+    s = onp.ones((group.size, 3)) if signs is None else signs[group]
+    onp.add.at(t, (rows, col[:, 0]), s[:, 0])
+    onp.add.at(t, (rows, col[:, 1]), s[:, 1])
+    onp.add.at(t, (rows, col[:, 2]), -s[:, 2])
     return t
 
 
@@ -87,13 +88,51 @@ class ClosureNoise(eqx.Module):
     keep: onp.ndarray  # flat indices of the real rows, in group order
 
     @classmethod
-    def from_indices(cls, i1, i2, i3, force=False):
+    def from_indices(
+        cls, i1, i2, i3, force=False, stations=None, frame=None, wavel=None
+    ):
         """Build from closure-phase indices, or ``None`` if none correlate.
+
+        With ``stations``, ``frame`` and ``wavel`` (one per sample), a leg
+        stored reversed shares the noise of its forward baseline, negated.
 
         ``force`` builds it anyway for three telescopes (every group one
         triangle, whitened by its own σ), which closure-phase offsets need.
         """
         i1, i2, i3 = (onp.asarray(i, dtype=int) for i in (i1, i2, i3))
+        signs = None
+        if i1.size and all(x is not None for x in (stations, frame, wavel)):
+            # Of two samples of one frame and wavelength with station pairs
+            # (a, b) and (b, a), the one seen later is the first's negated
+            # phase: alias it, with sign -1.
+            sta = onp.asarray(stations, dtype=int).reshape(-1, 2)
+            fr = onp.asarray(frame).reshape(-1)
+            wl = onp.broadcast_to(
+                onp.asarray(wavel, float).reshape(-1), fr.shape
+            )
+            i1o, i2o, i3o = i1, i2, i3
+            used = onp.arange(len(sta))  # a twin need not be a leg itself
+            a, b = sta[used, 0], sta[used, 1]
+            lw = onp.round(
+                onp.log(wl[used]) * 1e10
+            )  # wavelengths within ~1e-10
+            fwd = onp.column_stack([a, b, fr[used], lw])
+            rev = onp.column_stack([b, a, fr[used], lw])
+            _, gid = onp.unique(
+                onp.vstack([fwd, rev]), axis=0, return_inverse=True
+            )
+            gid = gid.reshape(-1)
+            first = onp.full(gid.max() + 1, onp.iinfo(int).max)
+            onp.minimum.at(first, gid[: used.size], used)
+            twin = first[gid[used.size :]]
+            alias = (a != b) & (twin < first[gid[: used.size]])
+            target = onp.where(alias, twin, used)
+            i1, i2, i3 = (target[q] for q in (i1, i2, i3))
+            signs = onp.stack(
+                [onp.where(alias[q], -1.0, 1.0) for q in (i1o, i2o, i3o)], 1
+            )
+            if not (signs < 0).any():
+                signs = None
         groups = _groups(i1, i2, i3)
         if not force and all(g.size == 1 for g in groups):
             return None  # three telescopes: nothing to decorrelate
@@ -102,7 +141,11 @@ class ClosureNoise(eqx.Module):
         factors = {}
         blocks = []
         for g in groups:
-            t = _incidence(g, i1, i2, i3) / onp.sqrt(3.0)
+            t = (
+                _incidence(g, i1, i2, i3)
+                if signs is None
+                else _incidence(g, i1, i2, i3, signs)
+            ) / onp.sqrt(3.0)
             key = (t.shape, t.tobytes())
             if key not in factors:
                 left, singular, _ = onp.linalg.svd(t, full_matrices=False)

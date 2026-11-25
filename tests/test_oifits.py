@@ -555,6 +555,24 @@ def test_closure_phases_pair_with_v2_of_another_insname(reverse, tmp_path):
     assert (record["i_cps3"] >= n_v2).all()
 
 
+def test_reversed_closure_triangle_stays_in_the_frame_of_its_baselines(
+    tmp_path,
+):
+    # An OI_T3 row averaged over other DITs than OI_VIS2 (30 s apart, inside
+    # twice INT_TIME) whose three legs are all stored reversed in OI_VIS2 must
+    # stay in that exposure's frame, so the closure noise sees one baseline.
+    waves = onp.array([4.8e-6])
+    hdul = _t3_under_other_insname(waves, ((1, 2), (2, 3), (1, 3)))
+    hdul["OI_VIS2"].data["INT_TIME"] = 60.0
+    t3 = hdul["OI_T3"].data
+    t3["MJD"][(t3["STA_INDEX"] == (1, 2, 3)).all(axis=1)] += 30.0 / 86400.0
+    path = tmp_path / "shifted.fits"
+    hdul.writeto(path)
+    data = OIData(path)
+    assert len(set(onp.asarray(data.frame))) == 1
+    assert data.cp_noise.size == 3
+
+
 def test_closure_phases_never_pair_with_another_array():
     # STA_INDEX belongs to an array: a V² table of another ARRNAME that
     # reuses the station numbers and wavelengths (at other (u, v)) must not
