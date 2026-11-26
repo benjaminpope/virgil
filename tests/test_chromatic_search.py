@@ -69,7 +69,7 @@ def _scaled(ratio):
     return Scaled(PowerLaw(1.0, wavel0=W0), ratio)
 
 
-def _template(blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01):
+def _template(blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, unit=1.0):
     """GRAVITY AT-like snapshots with zero data, in dictionary form."""
     base = vlti_oidata(
         hour_angles_h=(-1.0, 1.0),
@@ -109,16 +109,23 @@ def _template(blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01):
         record["flux"] = {
             "wavel": onp.asarray(base.wavel),
             "value": onp.ones(n),
-            "error": onp.full(n, 0.05),
+            "error": onp.full(n, 0.05 * unit),
             "row": rows,
         }
     return record
 
 
-def _data(truth, blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, key=1):
-    data = OIData(_template(blocks, sigma_phi))
+def _data(
+    truth,
+    blocks=("v2", "t3", "visphi", "flux"),
+    sigma_phi=0.01,
+    key=1,
+    unit=1.0,
+):
+    """``unit`` is the spectrum's continuum level (1, or e.g. raw ADU)."""
+    data = OIData(_template(blocks, sigma_phi, unit))
     if "flux" in blocks:
-        data = data.with_flux_scale(scale=(1.0, 0.5))
+        data = data.with_flux_scale(scale=(unit, 0.5 * unit))
     if "visphi" in blocks:
         data = data.with_continuum(CONTINUUM, lines=LINE)
     return data.with_model(truth, key=jax.random.PRNGKey(key))
@@ -304,3 +311,47 @@ def test_differential_phase_alone_detects_what_a_grey_fit_misses():
     assert float(chromatic["comp.dra"]) == pytest.approx(sep, rel=1e-5)
     assert float(chromatic["delta_chi2"]) > 30.0
     assert float(constant["delta_chi2"]) < 9.0
+
+
+ADU = 1e5
+
+
+def _flux_limit(data):
+    positions = {
+        "comp.dra": onp.array([0.2]),
+        "comp.ddec": onp.array([0.0]),
+        "comp.flux.ratio": onp.array([0.01]),
+    }
+    template = _scene(_power(0.05))
+    return float(injection_limits(template, data, positions, 3.0)[0, 0])
+
+
+def _null_flux_data(unit, mu):
+    """Null-scene data whose spectrum has grey scale ~``unit``, then the
+    scale prior restated with mean ``mu`` (the data are not regenerated)."""
+    blocks = ("v2", "t3", "flux")
+    data = _data(_scene(_power(1e-9)), blocks, unit=unit)
+    return data.with_flux_scale(scale=(mu, 0.5 * mu))
+
+
+@pytest.mark.parametrize("mu", [ADU, ADU / 2, 2 * ADU, ADU / 3])
+def test_oiflux_injection_limit_ignores_the_stated_scale_prior(mu):
+    """Audit finding 724#12.3b: injected at the data's grey scale, not at mu.
+
+    `FluxSpectrum.predict` returns ``mu t``, so adding its change of ``t`` at
+    ``mu`` scaled the injection by ``mu / k`` (limits ~3x too loose at
+    ``mu = k / 3``, clipped to the search bound below). The limit must not
+    depend on the stated prior mean, nor on the data's units.
+    """
+    reference = _flux_limit(_null_flux_data(1.0, 1.0))
+    assert _flux_limit(_null_flux_data(ADU, mu)) == pytest.approx(
+        reference, rel=1e-3
+    )
+
+
+def test_oiflux_tightens_the_injection_limit():
+    """The spectrum tightens an unresolved companion's limit (null data)."""
+    blocks = ("v2", "t3")
+    without = _flux_limit(_data(_scene(_power(1e-9)), blocks))
+    with_flux = _flux_limit(_null_flux_data(ADU, ADU))
+    assert with_flux < 0.8 * without

@@ -1,0 +1,1 @@
+`virgil.detection.rescale_errors` now raises a `ValueError` for data with calibration gains, closure-phase offsets or extra observables, instead of silently leaving χ²_r ≠ 1; proper weighting is planned for 0.4.3.

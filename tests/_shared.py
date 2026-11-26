@@ -155,7 +155,11 @@ def limit_significances(template, data, grid, limits, kind):
     """
     import jax.numpy as np
 
-    from virgil.likelihood import build_model, whitened_residuals
+    from virgil.likelihood import (
+        build_model,
+        flux_scale_posterior,
+        whitened_residuals,
+    )
     from scipy import stats
 
     keys = list(grid)
@@ -175,6 +179,18 @@ def limit_significances(template, data, grid, limits, kind):
         companion = build_model(template, keys, values)
         target = data
         if kind == "injection":
+            # The data are k t, the model mu t: restate the grey-scale prior
+            # at the null model's fitted k (public posterior) so the model's
+            # change of t is in the data's units.
+            spectra = flux_scale_posterior(null, data, kinds="flux")
+            if "flux" in spectra:
+                k = float(spectra["flux"]["mean"][0, 0])
+                mu, sd = (float(x) for x in data.extras[0].scale)
+                data = data.with_flux_scale(
+                    scale=(k, sd * k / mu), kinds="flux"
+                )
+                target = data
+
             # data + (companion data - null data), every observable block:
             # the noise-free data of each model differ by the signal only.
             def inject(d, c, n):
