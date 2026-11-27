@@ -21,9 +21,9 @@ def test_grid_fit_convergence_uses_half_chi2_not_the_signed_loglike(
     seen = []
     real = grid_fit._flux_converged
 
-    def spy(grad, curvature, loglike):
+    def spy(grad, curvature, loglike, scale=0.0):
         jax.debug.callback(lambda x: seen.append(onp.asarray(x)), loglike)
-        return real(grad, curvature, loglike)
+        return real(grad, curvature, loglike, scale)
 
     # _optimize_flux_grid is jitted: a program compiled by an earlier test
     # would bypass the spy, and ours must not outlive it.
