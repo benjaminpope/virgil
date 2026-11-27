@@ -40,6 +40,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Compilation cache | `virgil.enable_compilation_cache` |
 | Image-recovery scores | the module [`virgil.metrics`](api/metrics.md) |
 | Cross-validation | the module [`virgil.crossval`](api/crossval.md) (`cv_task`, `cross_validate`, `aggregate`, `aggregate_files`, `fold_masks`, `save_record`, `load_records`) |
+| Packed NUTS | the module [`virgil.flat_nuts`](api/flat_nuts.md) (`flat_nuts`, `flat_nuts_sampler`, `packed_posterior`) |
 | Instrument noise specs ([conventions](conventions.md#instrument-noise-specs)) | the module [`virgil.noise_spec`](api/noise_spec.md) (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`) |
 
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [orbit methods](orbit_methods.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md), [radio interferometry](radio_interferometry.md) (with its Toeplitz χ²), [radio CLEAN](radio_clean.md) and [cross-validation](cross_validation.md).

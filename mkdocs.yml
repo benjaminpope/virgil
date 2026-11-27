@@ -144,6 +144,7 @@ nav:
           - Linear marginalization (internal): api/linear.md
       - Sampling and evidence:
           - SMC: api/smc.md
+          - Packed NUTS: api/flat_nuts.md
           - Mode search: api/mode_search.md
           - Cross-validation: api/crossval.md
       - Searches and limits:

@@ -201,6 +201,13 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `gauss_newton_diag` | [Schraudolph (2002)](#schraudolph2002), [doi:10.1162/08997660260028683](https://doi.org/10.1162/08997660260028683) | after |
 | `gauss_newton_diag` | [Skilling & Bryan (1984)](#skillingbryan1984), [ADS](https://ui.adsabs.harvard.edu/abs/1984MNRAS.211..111S/abstract) | after |
 
+### `virgil.flat_nuts`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `(module)` | [Cabezas et al. (2024)](#cabezas2024), [arXiv:2402.10797](https://arxiv.org/abs/2402.10797), [GitHub](https://github.com/blackjax-devs/blackjax) | after |
+| `(module)` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
+
 ### `virgil.gains`
 
 | Symbol | Source | Relation |

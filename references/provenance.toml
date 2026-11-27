@@ -812,7 +812,7 @@ year = 2011
 alt_years = [2014]
 alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
-used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.flat_nuts", "virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
 note = "NUTS; JMLR 15, 1593 (2014)"
 bibcode = "2011arXiv1111.4246H"
 arxiv = "1111.4246"
@@ -2075,7 +2075,7 @@ arxiv = "2402.10797"
 repo = "https://github.com/blackjax-devs/blackjax"
 verified = true
 verified_via = "arxiv"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
+used_in = ["virgil.flat_nuts", "virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
 note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
 
 [ref.lee2018]
