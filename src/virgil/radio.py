@@ -2041,7 +2041,8 @@ class StagedFit:
     edge : dict
         Per boxed site, a bool array: within ``edge`` of a bound.
     failed : bool
-        Any nuisance sits at a box edge, or any fitted value is not finite.
+        Any nuisance sits at a box edge, any fitted value is not finite, or
+        the stage-3 joint fit did not converge.
     kkt : dict
         [`kkt_report`][virgil.fitting.kkt_report] of the joint fit.
     """
@@ -2084,7 +2085,8 @@ def fit_staged_nuisances(
        [`kkt_report`][virgil.fitting.kkt_report] of the image block.
 
     The fit fails (``failed``) if a boxed nuisance ends within ``edge`` of
-    either bound of its prior box. Provisional.
+    either bound of its prior box, if a fitted value is not finite, or if the
+    stage-3 joint fit does not converge. Provisional.
 
     Parameters
     ----------
@@ -2183,6 +2185,8 @@ def fit_staged_nuisances(
     finite = all(
         bool(onp.all(onp.isfinite(onp.asarray(v)))) for v in s3.values.values()
     )
+    # `start` sets the reference gradients: the staged fit's own start (init,
+    # nuisance defaults), not start3 (stage 2 zeroed the nuisance gradients).
     # kkt_report needs the function model, not the model built at the result;
     # a non-finite fit has no KKT point to report.
     report = (
@@ -2192,7 +2196,7 @@ def fit_staged_nuisances(
             (),
             regularizers,
             likelihoods=[term3],
-            start=start3,
+            start={**init, **full.defaults()},
             weight=weight,
         )
         if finite
@@ -2208,7 +2212,11 @@ def fit_staged_nuisances(
         table[site] = dict(value=x, lower=lo, upper=hi, edge_frac=frac)
         # A NaN value fails the edge test silently: flag it.
         flags[site] = (frac < edge) | ~onp.isfinite(x)
-    failed = any(bool(onp.any(f)) for f in flags.values()) or not finite
+    # an unconverged stage 3 (stopped at max_steps, stalled, ...) is not a fit
+    stalled = not bool(s3.info.get("converged", False))
+    failed = (
+        any(bool(onp.any(f)) for f in flags.values()) or not finite or stalled
+    )
     return StagedFit(
         (s1, s2, s3), ref_obs, sum_w, table, flags, failed, report
     )
