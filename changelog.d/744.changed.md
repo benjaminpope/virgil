@@ -1,0 +1,1 @@
+Orbit cells: the add-one C-steps pad a small batch of candidates to 8 or 32 rows instead of 256, about 2 to 5 times faster on the systems tried; results differ slightly from before (same labels and mode counts, ln Ẑ within 0.8 on one system in float32), pending a paired census.

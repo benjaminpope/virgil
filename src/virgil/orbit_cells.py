@@ -34,6 +34,7 @@ import itertools
 import math
 import time
 import warnings
+import weakref
 
 import jax
 import jax.numpy as np
@@ -127,6 +128,8 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 #                    (at least; raised to ln(n / δ) for n candidates)
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
+CSTEP_SIZES = (8, 32, CHUNK_C)  # padded batch sizes of a C-step call
+_WARMED = set()  # ids of the live plans whose C-step shapes are compiled
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
 EDGE_STOP = W  # |w_P| beyond which the logistic chart holds less than δ of the
 #                cell's ρ-interval: where a shared neighbour mode's proposal ends
@@ -1449,7 +1452,7 @@ def search_plan(space, key=None, nu_width=None):
             np.where(cat.valid, scaled + log_det, -1e30).max(axis=1)
         )
     gap = np.max(np.stack(heights), axis=0) - cat.log_b
-    return {
+    plan = {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
         "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
@@ -1460,6 +1463,7 @@ def search_plan(space, key=None, nu_width=None):
         "gap": np.asarray(gap, dt),
         "chi2": np.asarray(chi2s, dt), "n": np.asarray(ns, dt),
     }  # fmt: skip
+    return plan
 
 
 def _unique_starts(lab, v, h, r):
@@ -1498,11 +1502,14 @@ def _converge_csteps(space, plan, v, lab):
         nxt = []
         for sl in _chunks(len(active), CHUNK_C):
             idx = active[sl]
+            # the rows are independent, so a few add-one candidates need not
+            # run as 256 (three sizes keep the compiled shapes few)
+            size = next(s for s in CSTEP_SIZES if len(idx) <= s)
             res = _cstep_chunk(
                 space,
                 plan,
-                np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
-                np.asarray(_padded(lab[idx], CHUNK_C)),
+                np.asarray(_padded(v[idx], size), space.dtype),
+                np.asarray(_padded(lab[idx], size)),
                 N_NEWTON,
             )
             vs, ls, xs = (onp.asarray(a)[: len(idx)] for a in res[:3])
@@ -1619,6 +1626,22 @@ def search_cell(space, key=None, *, plan=None, info=None):
     """
     plan = search_plan(space, key) if plan is None else plan
     info = {} if info is None else info
+    if id(plan["w"]) not in _WARMED:
+        # compile the C-step at every padded size of ``_converge_csteps``, on
+        # dummy rows, so a later cell of the system (the plan is shared)
+        # compiles nothing, whichever stages the first cell reaches
+        _WARMED.add(id(plan["w"]))
+        # a freed array's id can be reused by a later plan
+        weakref.finalize(plan["w"], _WARMED.discard, id(plan["w"]))
+        k = len(space.cat.log_b)
+        for size in CSTEP_SIZES:
+            _cstep_chunk(
+                space,
+                plan,
+                np.asarray(_padded(onp.zeros((1, 3)), size), space.dtype),
+                np.asarray(_padded(onp.zeros((1, k), int), size)),
+                N_NEWTON,
+            )
     n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
     info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
     info.update(varpro_runs=0, varpro_capped=0, pre_runs=0, pre_capped=0)
