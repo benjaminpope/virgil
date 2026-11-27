@@ -1,0 +1,1 @@
+performance docs: for a seven-parameter astrometric orbit fit, compare by time per leapfrog step (one chain, warmup excluded), not a jitted gradient call; the deterministic angle sites cost nothing in the sampler
