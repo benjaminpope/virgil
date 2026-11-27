@@ -33,7 +33,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Optimizer options ([`virgil.fitting`](api/fitting.md)) | `fit(method="lbfgsb")` (scipy L-BFGS-B, float64, box bounds; the extra `info` keys `nit`, `message`, `pg_norm`, `restarts`, `undefined`) and `fit(post_step=)` (Adam only) |
 | Observable nuisance modes | the `modes` argument of `DifferentialPhase` and `FluxSpectrum`, the row-scoped correlated-flux marginalization of `GainModes`, and closure-phase modes that span several frames (the `modes` argument of `OIData.with_continuum`, `with_flux_scale` and `with_closure_offsets`); see [spectroscopic observables](spectro_observables.md) |
 | Night-outlier mixture ([`virgil.likelihood`](api/likelihood.md)) | `group_outlier_mixture`, `group_outlier_probabilities` |
-| Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
+| Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `fit_staged_nuisances`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
 | Radio Toeplitz χ² | the module [`virgil.radio_toeplitz`](api/radio_toeplitz.md) (`ToeplitzVisData`), `ComplexVisData.toeplitz`, and the scalar-term protocol of `fit` (`chi2_and_log_norm`, `curvature_params`, `curvature_loss`) |
 | Radio CLEAN | the module [`virgil.radio_clean`](api/radio_clean.md) (`clean`, `RadioCleanResult`, `fit_beam`, `restore`) and the `uvtaper` argument of `ComplexVisData.dirty_image` and `dirty_beam` |
 | Image blurring | `Image(blur_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers |
@@ -45,3 +45,13 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [orbit methods](orbit_methods.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md), [radio interferometry](radio_interferometry.md) (with its Toeplitz χ²), [radio CLEAN](radio_clean.md) and [cross-validation](cross_validation.md).
 
 The module `__provisional__` tuples (`("*",)` means the whole module) are authoritative for names, checked by `tests/test_stability.py`; the argument-level rows above are documented only here.
+
+## Experimental in 0.4.2
+
+Within the provisional radio imaging, three pieces are **experimental**: the pre-registered regularizer-weight rule failed its convergence criterion on the IM Lup visibilities (fits at w/s² ≤ 316 stopped at `kkt_w` of 1.8e-4 to 7.8e-4 against the required 1e-4, so no weight was chosen), and the gate carries to 0.4.3 with its criteria unchanged. Check their results against an independent imager.
+
+- `radio_clean` (`clean`, `RadioCleanResult`, `fit_beam`, `restore`);
+- `ComplexVisData` and `ComplexVisData.read_ms`;
+- `fit_staged_nuisances` (a staged fit can report success with an unconverged stage 3; fix planned for 0.4.3);
+- the radio path that sets the regularization weight λ by the degrees-of-freedom discrepancy (`DofDiscrepancy`, `LCurve.dof_discrepancy`).
+

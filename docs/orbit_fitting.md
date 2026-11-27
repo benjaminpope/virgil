@@ -160,6 +160,9 @@ for k, night in enumerate(nights):
  60238.0    1.07   ( 1.23)           0.49   ( 0.42)
  60240.6    2.06   ( 2.10)           1.36   ( 1.48)
  60247.4    4.24   ( 3.70)           0.85   ( 0.80)
+```
+
+```text
  60251.0    3.51   ( 2.98)           1.16   ( 1.09)
 ```
 
@@ -276,8 +279,8 @@ OrbitPipeline run in orbit_demo/run: complete
   posterior.num_chains = 2
   posterior.num_samples = 500
   posterior.num_warmup = 500
-  posterior.r_hat_max = 0.999672
-  posterior.ess_bulk_min = 1458.96
+  posterior.r_hat_max = 1.00073
+  posterior.ess_bulk_min = 1056.65
   posterior.divergence_fraction = 0
   posterior.optimum_gap_max = 0
   [pass] chi2: χ²/N = 1.87 for the best-fit orbit on quoted errors: consistent with the quoted errors.
@@ -291,10 +294,11 @@ OrbitPipeline run in orbit_demo/run: complete
   [pass] no_orbit: The best orbit beats a single star by 471 nats: the orbit is clearly preferred.
   [pass] period_bound: The period is inside its window (1.37 to 1e+03 d).
   [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [pass] r_hat: Largest R-hat 0.9997: the chains agree.
-  [pass] ess: Smallest bulk ESS 1459: enough independent samples.
+  [pass] r_hat: Largest R-hat 1.0007: the chains agree.
+  [pass] ess: Smallest bulk ESS 1057: enough independent samples.
   [pass] divergences: Divergent transitions: 0 per cent: none.
   [pass] mode_converged: The search's best mode is an optimum of the sampled density.
+  [pass] sampler_budget: Time budget: sampling ran to its full length.
   [warn] stage_warnings: 2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.33 mas). Set period_range to search shorter periods.; fit_orbit_aliases(): the residual correlation of ['phi'] is flat across channels (lag-2 well above the square of lag-1), the signature of a shared calibration error or of misfit (a resolved primary, a moving companion). The likelihood is tempered by it either way; check the model (AliasResult.tempering).. See the 'warnings' list of summary.json.
   2 warning(s) recorded in the search stage(s) (see the checks, or Result.summary['warnings'])
 ```
@@ -329,8 +333,14 @@ night       χ²/N   (true model)
 mjd60000    1.48   (  1.52)
 mjd60002    1.35   (  1.35)
 mjd60005    1.97   (  1.99)
+```
+
+```text
 mjd60009    1.71   (  1.72)
 mjd60238    0.81   (  0.88)
+```
+
+```text
 mjd60240    1.82   (  1.82)
 mjd60247    3.13   (  3.11)
 mjd60251    2.70   (  2.73)
@@ -362,10 +372,11 @@ for check in res.checks:
 [pass] no_orbit         The best orbit beats a single star by 471 nats: the orbit is clearly preferred.
 [pass] period_bound     The period is inside its window (1.37 to 1e+03 d).
 [pass] prior_bound      No posterior mass piles up at a prior bound.
-[pass] r_hat            Largest R-hat 0.9997: the chains agree.
-[pass] ess              Smallest bulk ESS 1459: enough independent samples.
+[pass] r_hat            Largest R-hat 1.0007: the chains agree.
+[pass] ess              Smallest bulk ESS 1057: enough independent samples.
 [pass] divergences      Divergent transitions: 0 per cent: none.
 [pass] mode_converged   The search's best mode is an optimum of the sampled density.
+[pass] sampler_budget   Time budget: sampling ran to its full length.
 [warn] stage_warnings   2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d,
 ```
 
@@ -397,12 +408,12 @@ print(
 ```text
               median   68% interval            truth
 period       12.3799   [12.3797, 12.3801]      12.3800
-a_mas        10.0071   [9.9853, 10.0282]      10.0000
-ecc           0.2992   [0.2984, 0.3000]       0.3000
-inc          49.8985   [49.7815, 50.0216]      50.0000
-omega        59.8835   [59.6248, 60.1546]      60.0000
-Omega       120.0773   [119.8880, 120.2619]     120.0000
-flux          0.2998   [0.2976, 0.3021]       0.3000
+a_mas        10.0070   [9.9853, 10.0285]      10.0000
+ecc           0.2993   [0.2984, 0.3001]       0.3000
+inc          49.9009   [49.7722, 50.0253]      50.0000
+omega        59.8826   [59.6078, 60.1461]      60.0000
+Omega       120.0783   [119.8955, 120.2698]     120.0000
+flux          0.3000   [0.2977, 0.3022]       0.3000
 t_peri     60001.998   [60001.994, 60002.001]    60002.000
 ```
 
@@ -425,7 +436,7 @@ print(
 
 ```text
 band    n   period (d)  χ²/N     log Z     p  flags
-         20     12.3799   1.87   -2505.6  1.00  ['hessian-singular']
+         20     12.3799   1.87   -2505.6  1.00  ['hessian-not-positive-definite']
 the short arcs kept N = [20] and excluded 183 other cycle counts
 ```
 
