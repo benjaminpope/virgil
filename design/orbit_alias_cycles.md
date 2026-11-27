@@ -1524,6 +1524,123 @@ has low ESS, with these rules (committed with the census criteria):
 
 Nothing in C1–C4 starts before the baseline and Stage C; a science merge needs its paired census delta.
 
+### 6.14 Profiling the between-night jitter in the search C-steps (design 2026-11-19)
+
+**Problem.** The search (`search_plan`, `_cstep_chunk`, `_chart_from`, `_labels`) holds σ_J at a reference value
+(`reference_jitter`), while the target carries σ_J as a chart coordinate (PR #733). When the true σ_J is about 10× the
+reference, every inlier night's Laplace quadratic is ≈ 100× too large, so it scores below its floor b_k, all labels are
+outlier, the labelled objective is constant, the C-steps do not move, and Newton starts where the label-summed gradient is
+weighted by e^{ℓ−b} ≈ 0. This is §6.9's failure with σ_J in place of s, and the fix has the same shape: the search
+maximizes over σ_J (and s) as well as the labels, and scores labels at the maximizer.
+
+**The per-peak term.** At a state x (orbit fixed), peak j of night k has
+
+  ℓ̃_kj(s, σ_J) = [ℓ_kj − Σ_g (n_g ln s_g + ½χ²_g(s_g⁻² − 1))]  (peak height: no σ_J)
+          − ½ ln(|Σ_tot|/|Σ_dat|) − ½ dᵀΣ_tot⁻¹d,           (Laplace term)
+
+with Σ_dat(s) = (Σ_g s_g⁻²H_g)⁻¹, Σ_tot = Σ_dat + σ_J²P, P = diag(1,1,0,0,0) and d = state − mean: `_peak_terms`. A
+night is inlier iff max_j ℓ̃_kj > b_k (§6.1, ε̄ = ½).
+
+**What is identifiable.**
+
+- *s* enters the peak height through the night's n_res residuals (curvature ≈ −2n_res in ln s) and Σ_dat ∝ s².
+- *σ_J* enters only the Laplace term, through the 2 position degrees of freedom of each inlier night. It is identified
+  only by the between-night scatter about the orbit in excess of s²Σ_dat, with curvature ≈ −4n_I in ln σ_J (n_I inlier
+  nights). A single night does not identify it.
+- *The confounding is real but weak.* Per position dof write f = s²A/(s²A + σ_J²), A the dof's Σ_dat variance at s = 1,
+  so ∂ln V/∂ln s = 2f and ∂ln V/∂ln σ_J = 2(1 − f) for the total variance V. With n_dof = 2n_I, the Fisher
+  information is I_ss = 2n_res + 2Σf², I_sσ = 2Σf(1 − f), I_σσ = 2Σ(1 − f)². By Cauchy–Schwarz the squared correlation is
+  ρ² = I_sσ²/(I_ss I_σσ) ≤ Σf²/(n_res + Σf²) ≤ 2n_I/(n_res + 2n_I). For n_res ≥ 10 per night ρ² ≤ 0.17 (0.05 at the
+  typical 40). The peak height separates wrong-sized quoted errors from additive jitter; σ_J is what is left of the
+  between-night scatter.
+
+**Alternate, do not solve jointly.** Block coordinate ascent on F(x; s, σ_J) = Σ_k max(max_j ℓ̃_kj, b_k), one round per
+C-step (step 1 then refines σ_J by a dof-corrected polish, below):
+
+1. **σ_J given (x, s), labels free.** Maximize G(σ_J) = F over ln σ_J ∈ ln `space.jitter_range` (the chart's bounds, not
+   new constants; the prior is flat in ln σ_J). Each night enters capped at its floor, so outliers cannot drag it (the
+   argument of §6.9) and no start labels are needed. G is flat where every night is at the floor (the stall), so a local
+   Newton is not enough: use a *global* grid in ln σ_J at spacing h = 1/√(2K), K the nights, then a Newton polish of the
+   winning node in ln σ_J at its labels, clipped to its neighbours, accepted only if F rises; the incoming σ_J competes on
+   the same F. The grid and this Newton see the **unscaled** F (κ = 1): it is continuous in σ_J, so no night crosses a
+   floor because of a correction. Then the REML polish (below) on the inlier set and peaks that win. Near the optimum G has
+   curvature ≈ −4n_I ≥ −4K, so the grid's loss is at most ½·4K·(h/2)² = ¼ nat, the figure of §6.9. The grid has
+   ⌈ln(hi/lo)/h⌉ + 1 nodes (72 at K = 40).
+2. **s given (x, σ_J, labels).** §6.9's closed form per block, ŝ_g² = Σ_I(χ²_g + q_g)/Σ_I n_g clipped to
+   [1/S_MAX, S_MAX] with q the peak's Laplace quadratic, then (σ_J > 0) `N_SCALE` Newton steps of Σ_I ℓ̃ in ln s with a
+   trust radius of one e-fold (`_scale_step` of #642, folded into `_profile`). Data with gains or closure offsets keep s = 1 (§1.1).
+3. **Labels** at the new (s, σ_J), by `_labels` on the *rewritten* x.
+
+The REML polish of step 1 moves σ_J off the maximum of the unscaled F that the labels score, so the alternation is not a
+monotone ascent on F. The incoming σ_J competes on F and step 2 starts from the better of its closed form and the incoming s. §6.1's finite termination is therefore **not** claimed: the
+C-step loop is bounded by `N_C`, and a cap hit shows as `c_capped` in the census. One round per C-step: ρ² ≤ 0.17 is
+the contraction of the alternation, and the C-steps iterate.
+
+**Evaluation (closed form, so the grid is cheap).** σ_J enters Σ_tot through the rank-2 P. With E = (e₁ e₂),
+M = EᵀΣ_dat⁻¹E (2 × 2, eigenpairs (μ_i, u_i)) and c = Uᵀ EᵀΣ_dat⁻¹ d,
+
+  ln(|Σ_tot|/|Σ_dat|) = Σ_i ln(1 + σ_J²μ_i),  dᵀΣ_tot⁻¹d = dᵀΣ_dat⁻¹d − Σ_i c_i²σ_J²/(1 + σ_J²μ_i).
+
+These are computed once per peak per C-step at the current (s, x), after which each node costs O(4). A test checks them
+against `_peak_terms`.
+
+**The core step uses the same σ_J.** The C-step's labelled WLS used the plan's precisions at ln s = 0 and the reference
+σ_J. A global s cancels there, but σ_J does not (it adds to the position variance only, so the (p, v) weights change
+shape). The C-step therefore rebuilds the (p, v) block precision and the ln f weight per night from `_peak_precision` at
+the current (s, σ_J) before its Newton. A set's data residual is then **recomputed at the profiled (s, σ_J)**
+(`_varpro_chunk`): with the plan's weights at the reference, an underestimated σ_J makes the weight too tight and the
+residual larger by up to (σ² + σ_J²)/(σ² + σ_ref²), which on data that do not rescale rejects true sets (the χ² cut's
+S_MAX² slack exists only where s is free). With a marginal σ_J the cut is the unscaled χ²(1 − δ) of the set's equations
+less the 4 TI′ (`plan["cut0"]`). A C-step with no inlier label does not profile (the orbit it would profile against is the
+collapsed TI′ = 0) and keeps its tail. `_profile` calls are charged to `info["evaluations"]`.
+
+**The floor does not depend on σ_J.** b_k is the night's outlier density: it integrates the night's own scale (Laplace at
+ŝ_k) and has no σ_J, and it does not depend on x's s or on the orbit. Step 1 therefore moves σ_J with the floor fixed,
+which is what makes the cap "outliers cannot drag it" and the monotonicity of F hold. Under (iii′) the outlier term moves
+with s, which only step 2 changes, and step 2 re-evaluates it.
+
+**Degrees-of-freedom bias of the profiled σ_J (REML-style).** The C-step fits the orbit to the same inlier positions, so
+the maximum-likelihood σ_J² is low by about (2n_I − p)/(2n_I). Declared p = 7, the orbit parameters that are fitted
+against the positions (4 TI′, plus ln P and the two ζ coordinates; ln f and the velocities add none). Step 1 therefore
+finishes with a polish of the dof-corrected objective on the inlier set I and peaks j_I that win the unscaled grid: Σ_I
+(height − ½ ln|Σ_tot|/|Σ_dat| − ½ κ dᵀΣ_tot⁻¹d), κ = 2n_I/(2n_I − p) where 2n_I − p ≥ 3 and κ = 1 otherwise,
+`N_SCALE` Newton steps in ln σ_J clipped to one grid spacing of the unscaled optimum, no floor re-capping (the floor is
+independent of σ_J and the set is fixed, so nothing crosses it). The correction was first applied inside the floor-capped
+sum; there κ jumps with n_I (it is not monotone: n_I = 4: 1; 5: 3.3; 6: 2.4; 7: 2.0; 10: 1.5; 20: 1.2) and, applied before
+the cap, that biased σ_J low at K = 5–8 and clamped true inliers to the floor. Fixing I first removes both. The floor of 3 degrees of freedom is
+declared: with fewer, the orbit is not identified by the positions and the correction has no meaning. Below the floor (2n_I − p < 3, the same threshold as `reference_jitter`) the orbit nearly interpolates the positions and overfitting only shrinks σ_J, so σ_J is the larger of the unscaled optimum and the incoming value; there is no REML polish. It is the same
+correction as `reference_jitter`'s, with the same p.
+
+**Constants.** Declared: grid spacing 1/√(2K); one round per C-step; p = 7 and the floor of 3 dofs in κ. Inherited: the
+σ_J bounds, `N_SCALE`, `S_MAX`. No others, and none from seeds or named systems.
+
+**`reference_jitter` after this change.** It only places the plan's weights and starts the chart's σ_J coordinate; the
+grid removes the search's dependence on it. So it is kept simple and robust, not best:
+
+- *Seed.* Take the `n_best` best seeds of each band and keep the one with the least median |r|²: it resists a single
+  night the alias does not absorb. It does not remove the small-K multi-band collapse (the median is still bounded by the
+  least-squares sum, so over many bands at small 2K − 7 it falls): that is why this value only places the weights and the
+  C-steps' profile (a global ln σ_J grid) finds σ_J. It is a start, not an estimate.
+- *Degrees of freedom.* The seed also fits P, e and T on the same positions, so it fits `P_ORBIT` = 7 parameters and
+  leaves 2K − 7 position dofs: divide the median-based variance by (2K − 7)/2K, and the trim's scale likewise.
+- *Few nights.* With 2K − 7 < `DOF_FLOOR` (K ≤ 4) return the geometric centre of `jitter_range` (the prior median).
+- *Outlier nights.* Trim the nights with |r|² above the (1 − δ) quantile of a χ²₂ scaled by the median variance (δ = `DELTA`),
+  never more than K − 5 of them (never fewer than 5 left), refit once, take the medians of the refit residuals.
+- Clip to `jitter_range`.
+
+**No scoring mismatch.** After the step x carries (s, σ_J) in its own coordinates. `_labels`, `_scores`, `_prune`,
+`_refine` read them from x and the C-step's weights are rebuilt from them, so no stage scores at a value another stage
+did not optimize. A test asserts that `_cstep_chunk`'s returned labels equal `_labels` at its returned x.
+
+**Tests.** (i) The closed form equals `_peak_terms`. (ii) Started with a reference σ_J small enough that at most a quarter of the nights are inliers
+at the reference (the stall), at K = 5, 7 (the search), the result is |Δ ln σ_J| ≤ 3 sd,
+sd = 1/√(2(2K − p)(1 − f)²) the Fisher standard deviation of ln σ_J at the truth over the 2K − p residual dofs (computed
+in the test), and label every true inlier. (iii) Non-rescalable data keep s = 1. (iv)
+`reference_jitter` at K ≤ 4 (the prior median), with a gross night (the trim helps on most unpicked draws) and a few-band clean-sample check; the C-step test at K = 5, 7, 40 starts from the reference labels at 4.6× below the truth in total error (not a full stall at K = 40, where a quarter to three quarters of the nights are inliers at the start). (v) The
+strict seed-0 end-to-end test (xfail removed only if it passes, tolerance unchanged). (vi) The census (§14 and its criteria
+file): a science merge needs its paired delta. Any other tolerance in the tests is derived the same way or declared in its
+docstring.
+
 
 ## 7. Pruning
 
