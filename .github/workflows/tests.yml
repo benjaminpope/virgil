@@ -125,6 +125,10 @@ jobs:
       # for virgil-validation; xunit1 keeps test properties.
       - name: Test Suite
         env:
+          # Covers interpreter start-up (pytest enables faulthandler itself
+          # later). A SIGKILL from jetsam leaves no stack: see the memory
+          # log and the jetsam step.
+          PYTHONFAULTHANDLER: "1"
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
@@ -141,6 +145,10 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then
             nproc; free -m; df -h .
             .github/scripts/mem_sampler.sh &
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            sysctl -n hw.ncpu hw.memsize
+            sh .github/scripts/mem_sampler_macos.sh > mem-macos.log 2>&1 &
           fi
           echo "per-test budget: ${VIRGIL_TEST_BUDGET:-off} s"
           # --timeout-method=thread: the 300 s per-test timeout (pyproject.toml,
@@ -159,6 +167,25 @@ jobs:
       - name: kernel log
         if: always() && runner.os == 'Linux'
         run: sudo dmesg | grep -iE "oom|killed process" | tail -20 || true
+
+      - name: macOS memory-kill evidence
+        if: (failure() || cancelled()) && runner.os == 'macOS'
+        timeout-minutes: 3  # a slow log scan must not starve the uploads below
+        run: |
+          log show --last 2h --predicate '(processID == 0 AND (eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus")) OR process == "ReportCrash"' | tail -200 || true
+          # Jetsam ledger snapshots and native crash reports (Mach exceptions)
+          for d in ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports; do
+            ls -la "$d" 2>/dev/null || true
+            for f in "$d"/*.ips; do
+              [ -f "$f" ] || continue
+              echo "=== $f"; head -c 20000 "$f"; cp "$f" . || true
+            done
+          done
+
+      - name: upload macOS memory log
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with: {name: "mem-${{ matrix.id }}", path: "mem-macos.log\n*.ips", retention-days: 14, if-no-files-found: ignore}
 
       # For the nightly report, the x64 evidence and scripts/update_test_durations.py.
       - name: upload JUnit report
